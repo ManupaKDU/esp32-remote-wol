@@ -106,17 +106,24 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 
 static void connectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
+  if (mqtt.connected()) return;
 
+  // retry throttle (non-blocking)
+  static uint32_t nextTry = 0;
+  uint32_t now = millis();
+  if ((int32_t)(now - nextTry) < 0) return;
+  nextTry = now + 3000; // try every 3 seconds
+
+  // (safe to call repeatedly)
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   tls.setInsecure();
 
-  while (!mqtt.connected()) {
-    mqtt.connect(("wol-" + deviceHash.substring(0,16)).c_str(),
-                 MQTT_USER, MQTT_PASS);
-    delay(500);
+  // attempt one connect
+  if (mqtt.connect(("wol-" + deviceHash.substring(0,16)).c_str(),
+                   MQTT_USER, MQTT_PASS)) {
+    mqtt.subscribe(TOPIC_CMD.c_str());
   }
-  mqtt.subscribe(TOPIC_CMD.c_str());
 }
 
 // ================= Main runtime =================
@@ -130,7 +137,7 @@ void setup() {
   TOPIC_CMD = "wol/" + deviceHash;
 
   ensureWiFi();
-  connectMQTT();
+  connectMQTT(); // tries once
 }
 
 void loop() {
