@@ -18,11 +18,11 @@ No public IP required.
 
 1. ESP32 connects to Wi-Fi and an MQTT broker
 2. A unique **Device ID** is generated
-3. Web request publishes a hashed command
+3. Web request publishes a hashed command over MQTT
 4. ESP32 listens only to its own topic
 5. Valid command triggers a WoL packet
 
-> Wake-on-LAN must already work on the target PC.
+> Wake-on-LAN must already work on the local network before remote use.
 
 ---
 
@@ -34,8 +34,6 @@ https://wol.kreaxv.top/
 - Configure Wi-Fi
 - Wake a PC using Device ID and MAC address
 
-Firmware is open source and can also be built manually.
-
 ---
 
 ## Supported ESP32 boards
@@ -46,8 +44,6 @@ Chip-family based. Board vendor does not matter.
 - **ESP32-S2**
 - **ESP32-S3**
 - **ESP32-C3**
-
-Select the matching PlatformIO environment.
 
 ---
 
