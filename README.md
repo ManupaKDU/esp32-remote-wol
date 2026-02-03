@@ -1,38 +1,39 @@
 # esp32-remote-wol
 
-Remote Wake-on-LAN firmware for ESP32 boards.
+Remote **Wake-on-LAN** firmware for ESP32 boards.
 
-Wake a PC remotely over the internet, even when your home network is behind CGNAT
-or has no public IP.
+Wake a PC remotely over the internet, even if your home network is behind **CGNAT**
+or has **no public IP**.
 
-The ESP32 connects outbound to an MQTT broker and sends Wake-on-LAN packets on
-your local network.
+The ESP32 connects **outbound** to an MQTT broker and sends Wake-on-LAN packets
+inside your local network.
 
-No inbound connections.
-No port forwarding.
+No inbound connections.  
+No port forwarding.  
 No public IP required.
 
 ---
 
 ## How it works
 
-1. ESP32 connects to Wi-Fi
-2. ESP32 connects outbound to an MQTT broker
-3. A device ID is generated from the ESP32 hardware ID
-4. ESP32 subscribes to its own MQTT topic
-5. A valid MQTT message triggers a Wake-on-LAN packet
+1. ESP32 connects to Wi-Fi  
+2. ESP32 connects outbound to an MQTT broker  
+3. A **device ID** is generated from the ESP32 hardware ID  
+4. ESP32 subscribes to its own MQTT topic  
+5. A valid MQTT message triggers a Wake-on-LAN packet  
 
-Wake-on-LAN must already work on the local network before remote use.
+> Wake-on-LAN must already work on the local network before using this remotely.
 
 ---
 
 ## Web interface (official demo)
 
-https://wol.kreaxv.top/
+**https://wol.kreaxv.top/**
 
-- Flash firmware in-browser (ESP Web Tools)
+Features:
+- Flash firmware directly in the browser (ESP Web Tools)
 - Configure Wi-Fi
-- Wake a PC using Device ID and MAC address
+- Wake a PC using **Device ID** and **MAC address**
 
 ---
 
@@ -45,55 +46,72 @@ Wake-on-LAN commands.
 
 ### Mode 1: Official demo web + default broker (recommended)
 
-Use the firmware as-is with default settings.
+Use the firmware **as-is** with default settings.
+
+- No configuration needed
+- Uses the official demo web interface
+- Uses the default MQTT broker
+
+Best choice for most users.
 
 ---
 
 ### Mode 2: Your own MQTT broker + client
 
-Use this mode if you want full control and do not use the demo web or broker.
+Use this mode if you want **full control** and do not use the demo web or broker.
 
-Firmware setup:
-- Set USE_HASHED_ID = false
-- Replace MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS with your broker details
+#### Firmware setup
 
-MQTT command format:
-  Topic:   wol/<device-id>
-  Payload: AA:BB:CC:DD:EE:FF
+- Set `USE_HASHED_ID = false`
+- Replace:
+  - `MQTT_HOST`
+  - `MQTT_PORT`
+  - `MQTT_USER`
+  - `MQTT_PASS`
 
-Example:
-  Topic:   wol/1a2b3c4d
-  Payload: 3C:52:82:11:9A:EF
+with your own broker credentials.
 
-Messages on other topics or with invalid payloads are ignored.
+#### MQTT command format
+
+- **Topic:** `wol/<device-id>`
+- **Payload:** `AA:BB:CC:DD:EE:FF`
+
+#### Example
+
+- Topic: `wol/1a2b3c4d`
+- Payload: `3C:52:82:11:9A:EF`
+
+> Messages on other topics or with invalid payloads are ignored.
 
 ---
 
 ## Supported ESP32 boards
 
-Chip-family based. Board vendor does not matter.
+Chip-family based.  
+Board vendor and layout do **not** matter.
 
-- ESP32
-- ESP32-S2
-- ESP32-S3
-- ESP32-C3
+Supported chip families:
+- **ESP32**
+- **ESP32-S2**
+- **ESP32-S3**
+- **ESP32-C3**
 
 ---
 
 ## Building from source
 
-- Open the project in PlatformIO
-- Select the matching environment
-- Build and upload
+1. Open the project in **PlatformIO**
+2. Select the matching environment
+3. Build and upload
 
-See platformio.ini.
+See `platformio.ini` for available environments.
 
 ---
 
 ## Security notes
 
 - Device listens only to its own MQTT topic
-- Optional SHA-256 device identifiers
+- Optional SHA-256 based device identifiers
 - No inbound connections to the local network
 - No exposed services
 - No port forwarding required
