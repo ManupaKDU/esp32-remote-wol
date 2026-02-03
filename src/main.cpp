@@ -10,9 +10,37 @@
 #include <WiFiManager.h>   // tzapu/WiFiManager
 #include "mbedtls/sha256.h"
 
+// ================= Device ID mode =================
+//
+// IMPORTANT:
+//
+// Use the OFFICIAL DEMO WEB PAGE (with the default broker below):
+//  - Set USE_HASHED_ID = true
+//  - Topic uses SHA-256 of the device ID
+//
+// Use your OWN MQTT client + your OWN broker:
+//  - Set USE_HASHED_ID = false
+//  - Replace MQTT_HOST / MQTT_USER / MQTT_PASS
+//  - Topic uses the RAW device ID
+//
+// DEVICE ID USED IN TOPIC:
+//  - USE_HASHED_ID = true  -> <device-id> = sha256(rawId)
+//  - USE_HASHED_ID = false -> <device-id> = rawId (ESP efuse MAC in hex)
+//
+// MQTT MESSAGE FORMAT:
+//  - Topic:   wol/<device-id>
+//  - Payload: MAC address "AA:BB:CC:DD:EE:FF"
+//
+// Example:
+//  - Topic:   wol/12ab34cd
+//  - Payload: 3C:52:82:11:9A:EF
+//
+
+#define USE_HASHED_ID false  // true = sha256(rawId), false = rawId
+
 // ----------------------- MQTT -----------------------
-// Default demo MQTT broker (remote-only, TLS).
-// Replace these with your own broker credentials if needed.
+// Demo broker credentials (used only when USE_HASHED_ID = true)
+// Replace with your own broker if USE_HASHED_ID = false
 static const char* MQTT_HOST = "724f4005ddac40d5a4d1586443333e56.s1.eu.hivemq.cloud";
 static const uint16_t MQTT_PORT = 8883;
 static const char* MQTT_USER = "client";
@@ -38,7 +66,9 @@ static String sha256Hex(const String& input) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
   mbedtls_sha256_starts_ret(&ctx, 0);
-  mbedtls_sha256_update_ret(&ctx, (const unsigned char*)input.c_str(), input.length());
+  mbedtls_sha256_update_ret(&ctx,
+    (const unsigned char*)input.c_str(),
+    input.length());
   mbedtls_sha256_finish_ret(&ctx, out);
   mbedtls_sha256_free(&ctx);
 
@@ -51,8 +81,12 @@ static String sha256Hex(const String& input) {
 // --------------------- MAC ---------------------
 static bool parseMac(const String& macStr, uint8_t out[6]) {
   int v[6];
-  if (sscanf(macStr.c_str(), "%x:%x:%x:%x:%x:%x",
-             &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) return false;
+  if (sscanf(macStr.c_str(),
+             "%x:%x:%x:%x:%x:%x",
+             &v[0], &v[1], &v[2],
+             &v[3], &v[4], &v[5]) != 6)
+    return false;
+
   for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
   return true;
 }
@@ -70,9 +104,6 @@ static void sendWOL(const uint8_t mac[6]) {
 }
 
 // --------------------- WiFi Manager ---------------------
-// Initial Wi-Fi setup:
-// - connect to last saved Wi-Fi
-// - open config portal only if needed
 static void ensureWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -95,7 +126,6 @@ static void ensureWiFi() {
 }
 
 // --------------------- MQTT ---------------------
-// MQTT payload must be MAC string: "AA:BB:CC:DD:EE:FF"
 static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (String(topic) != TOPIC_CMD) return;
 
@@ -110,20 +140,19 @@ static void connectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mqtt.connected()) return;
 
-  // retry throttle (non-blocking)
   static uint32_t nextTry = 0;
   uint32_t now = millis();
   if ((int32_t)(now - nextTry) < 0) return;
-  nextTry = now + 3000; // try every 3 seconds
+  nextTry = now + 3000;
 
-  // (safe to call repeatedly)
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   tls.setInsecure();
 
-  // attempt one connect
-  if (mqtt.connect(("wol-" + deviceHash.substring(0,16)).c_str(),
-                   MQTT_USER, MQTT_PASS)) {
+  if (mqtt.connect(
+        ("wol-" + deviceHash.substring(0, 16)).c_str(),
+        MQTT_USER,
+        MQTT_PASS)) {
     mqtt.subscribe(TOPIC_CMD.c_str());
   }
 }
@@ -133,13 +162,16 @@ void setup() {
   rawId = String((uint32_t)ESP.getEfuseMac(), HEX);
   rawId.toLowerCase();
 
+#if USE_HASHED_ID
   deviceHash = sha256Hex(rawId);
-
-  // Subscribe to: wol/<sha256(deviceId)>
-  TOPIC_CMD = "wol/" + deviceHash;
+  TOPIC_CMD  = "wol/" + deviceHash;
+#else
+  deviceHash = rawId;
+  TOPIC_CMD  = "wol/" + rawId;
+#endif
 
   ensureWiFi();
-  connectMQTT(); // tries once
+  connectMQTT();
 }
 
 void loop() {
