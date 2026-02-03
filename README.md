@@ -5,13 +5,6 @@ Remote **Wake-on-LAN** firmware for ESP32 boards.
 Wake a PC remotely over the internet, even if your home network is behind **CGNAT**
 or has **no public IP**.
 
-The ESP32 connects **outbound** to an MQTT broker and sends Wake-on-LAN packets
-inside your local network.
-
-No inbound connections.  
-No port forwarding.  
-No public IP required.
-
 ---
 
 ## How it works
