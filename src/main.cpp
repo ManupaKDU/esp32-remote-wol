@@ -11,6 +11,8 @@
 #include "mbedtls/sha256.h"
 
 // ----------------------- MQTT -----------------------
+// Default demo MQTT broker (remote-only, TLS).
+// Replace these with your own broker credentials if needed.
 static const char* MQTT_HOST = "724f4005ddac40d5a4d1586443333e56.s1.eu.hivemq.cloud";
 static const uint16_t MQTT_PORT = 8883;
 static const char* MQTT_USER = "client";
