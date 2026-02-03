@@ -58,12 +58,12 @@ Firmware setup:
 - Replace MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS with your broker details
 
 MQTT command format:
-Topic:   wol/<device-id>
-Payload: AA:BB:CC:DD:EE:FF
+  Topic:   wol/<device-id>
+  Payload: AA:BB:CC:DD:EE:FF
 
 Example:
-Topic:   wol/1a2b3c4d
-Payload: 3C:52:82:11:9A:EF
+  Topic:   wol/1a2b3c4d
+  Payload: 3C:52:82:11:9A:EF
 
 Messages on other topics or with invalid payloads are ignored.
 
