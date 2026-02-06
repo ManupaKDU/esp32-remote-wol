@@ -41,23 +41,31 @@ Only needed if you want full control instead of the hosted interface.
 
 Change:
 
+```text
 #define USE_HASHED_ID 0
 MQTT_HOST
 MQTT_PORT
 MQTT_USER
 MQTT_PASS
+```
 
 ### MQTT command format
 
-Topic
+**Topic**
+```text
 wol/<device-id>
+```
 
-Payload
+**Payload**
+```text
 AA:BB:CC:DD:EE:FF
+```
 
-Example:
+**Example**
+```text
 Topic:   wol/1a2b3c4d
 Payload: 3C:52:82:11:9A:EF
+```
 
 Invalid topic or payload is ignored.
 
