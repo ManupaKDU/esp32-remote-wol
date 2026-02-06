@@ -7,40 +7,21 @@
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
 
-#include <WiFiManager.h>   // tzapu/WiFiManager
-#include "mbedtls/sha256.h"
+#include <WiFiManager.h>      // tzapu/WiFiManager
+#include "mbedtls/md.h"       // stable SHA-256 wrapper (mbedtls_md)
 
 // ================= Device ID mode =================
 //
-// IMPORTANT:
+// USE_HASHED_ID = 1 -> topic uses SHA-256(rawId)
+// USE_HASHED_ID = 0 -> topic uses rawId
 //
-// Use the OFFICIAL DEMO WEB PAGE (with the default broker below):
-//  - Set USE_HASHED_ID = true
-//  - Topic uses SHA-256 of the device ID
+// MQTT:
+//   Topic:   wol/<device-id>
+//   Payload: "AA:BB:CC:DD:EE:FF"
 //
-// Use your OWN MQTT client + your OWN broker:
-//  - Set USE_HASHED_ID = false
-//  - Replace MQTT_HOST / MQTT_USER / MQTT_PASS
-//  - Topic uses the RAW device ID
-//
-// DEVICE ID USED IN TOPIC:
-//  - USE_HASHED_ID = true  -> <device-id> = sha256(rawId)
-//  - USE_HASHED_ID = false -> <device-id> = rawId (ESP efuse MAC in hex)
-//
-// MQTT MESSAGE FORMAT:
-//  - Topic:   wol/<device-id>
-//  - Payload: MAC address "AA:BB:CC:DD:EE:FF"
-//
-// Example:
-//  - Topic:   wol/12ab34cd
-//  - Payload: 3C:52:82:11:9A:EF
-//
-
-#define USE_HASHED_ID false  // true = sha256(rawId), false = rawId
+#define USE_HASHED_ID 1
 
 // ----------------------- MQTT -----------------------
-// Demo broker credentials (used only when USE_HASHED_ID = true)
-// Replace with your own broker if USE_HASHED_ID = false
 static const char* MQTT_HOST = "724f4005ddac40d5a4d1586443333e56.s1.eu.hivemq.cloud";
 static const uint16_t MQTT_PORT = 8883;
 static const char* MQTT_USER = "client";
@@ -52,7 +33,7 @@ PubSubClient mqtt(tls);
 WiFiUDP udp;
 
 static String rawId;
-static String deviceHash;
+static String deviceId;   // rawId or sha256(rawId)
 static String TOPIC_CMD;
 
 // ---- runtime wifi watchdog ----
@@ -60,17 +41,18 @@ static String TOPIC_CMD;
 static uint32_t wifiLostAt   = 0;
 static uint32_t lastWifiKick = 0;
 
-// --------------------- SHA-256 ---------------------
+// --------------------- SHA-256 (clean + portable) ---------------------
 static String sha256Hex(const String& input) {
   uint8_t out[32];
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts_ret(&ctx, 0);
-  mbedtls_sha256_update_ret(&ctx,
-    (const unsigned char*)input.c_str(),
-    input.length());
-  mbedtls_sha256_finish_ret(&ctx, out);
-  mbedtls_sha256_free(&ctx);
+
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!info) return String();
+
+  int rc = mbedtls_md(info,
+                      (const unsigned char*)input.c_str(),
+                      input.length(),
+                      out);
+  if (rc != 0) return String();
 
   char buf[65];
   for (int i = 0; i < 32; i++) sprintf(buf + i * 2, "%02x", out[i]);
@@ -81,10 +63,8 @@ static String sha256Hex(const String& input) {
 // --------------------- MAC ---------------------
 static bool parseMac(const String& macStr, uint8_t out[6]) {
   int v[6];
-  if (sscanf(macStr.c_str(),
-             "%x:%x:%x:%x:%x:%x",
-             &v[0], &v[1], &v[2],
-             &v[3], &v[4], &v[5]) != 6)
+  if (sscanf(macStr.c_str(), "%x:%x:%x:%x:%x:%x",
+             &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
     return false;
 
   for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
@@ -130,6 +110,7 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (String(topic) != TOPIC_CMD) return;
 
   String msg;
+  msg.reserve(length);
   for (unsigned i = 0; i < length; i++) msg += (char)payload[i];
 
   uint8_t mac[6];
@@ -147,28 +128,28 @@ static void connectMQTT() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
-  tls.setInsecure();
 
-  if (mqtt.connect(
-        ("wol-" + deviceHash.substring(0, 16)).c_str(),
-        MQTT_USER,
-        MQTT_PASS)) {
+  tls.setInsecure(); // (optional) replace with CA cert if you want strict TLS
+
+  String clientId = "wol-" + deviceId.substring(0, 16);
+  if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
     mqtt.subscribe(TOPIC_CMD.c_str());
   }
 }
 
 // ================= Main runtime =================
 void setup() {
+  // Important: ESP.getEfuseMac() is 64-bit; this keeps your old behavior
   rawId = String((uint32_t)ESP.getEfuseMac(), HEX);
   rawId.toLowerCase();
 
 #if USE_HASHED_ID
-  deviceHash = sha256Hex(rawId);
-  TOPIC_CMD  = "wol/" + deviceHash;
+  deviceId  = sha256Hex(rawId);
 #else
-  deviceHash = rawId;
-  TOPIC_CMD  = "wol/" + rawId;
+  deviceId  = rawId;
 #endif
+
+  TOPIC_CMD = "wol/" + deviceId;
 
   ensureWiFi();
   connectMQTT();
