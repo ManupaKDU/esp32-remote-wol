@@ -91,7 +91,6 @@ static void ensureWiFi() {
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(180);
-  wm.setMinimumSignalQuality(60);
 
   String html =
     "<b>Device ID:</b><br>"
