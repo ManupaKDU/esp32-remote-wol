@@ -1,22 +1,17 @@
-// Headless ESP32 WoL listener:
-// connects to Wi-Fi + MQTT, waits for WoL commands, self-recovers on network loss
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
-
-#include <WiFiManager.h>      // tzapu/WiFiManager
-#include "mbedtls/md.h"       // stable SHA-256 wrapper (mbedtls_md)
-
-// ================= Device ID mode =================
+#include <ImprovWiFiLibrary.h>
+#include "mbedtls/md.h"
+// ================= ESP32 MAC mode =================
 //
-// USE_HASHED_ID = 1 -> topic uses SHA-256(rawId)
-// USE_HASHED_ID = 0 -> topic uses rawId
+// USE_HASHED_ID = 1 -> topic uses SHA-256(esp32mac)
+// USE_HASHED_ID = 0 -> topic uses esp32mac
 //
 // MQTT:
-//   Topic:   wol/<device-id>
+//   Topic:   wol/<esp32-mac>
 //   Payload: "AA:BB:CC:DD:EE:FF"
 //
 #define USE_HASHED_ID 1
@@ -31,148 +26,111 @@ static const char* MQTT_PASS = "BJa938Cguzds4fx";
 WiFiClientSecure tls;
 PubSubClient mqtt(tls);
 WiFiUDP udp;
+ImprovWiFi improvSerial(&Serial);
 
-static String rawId;
-static String deviceId;   // rawId or sha256(rawId)
-static String TOPIC_CMD;
+static uint8_t mac[6];
+static char esp32mac[65];
+static char topicCmd[80];
 
-// ---- runtime wifi watchdog ----
-// policy: if Wi-Fi drops -> reconnect every 20s, reboot after 180s
-static uint32_t wifiLostAt   = 0;
-static uint32_t lastWifiKick = 0;
-
-// --------------------- SHA-256 (clean + portable) ---------------------
-static String sha256Hex(const String& input) {
-  uint8_t out[32];
-
+// --------------------- SHA-256 ---------------------
+static void sha256Hex(const char* input, char* output) {
+  uint8_t hash[32];
   const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  if (!info) return String();
-
-  int rc = mbedtls_md(info,
-                      (const unsigned char*)input.c_str(),
-                      input.length(),
-                      out);
-  if (rc != 0) return String();
-
-  char buf[65];
-  for (int i = 0; i < 32; i++) sprintf(buf + i * 2, "%02x", out[i]);
-  buf[64] = 0;
-  return String(buf);
+  if (mbedtls_md(info, (const unsigned char*)input, strlen(input), hash) != 0) {
+    output[0] = 0;
+    return;
+  }
+  for (int i = 0; i < 32; i++) sprintf(output + i * 2, "%02x", hash[i]);
+  output[64] = 0;
 }
 
-// --------------------- MAC ---------------------
-static bool parseMac(const String& macStr, uint8_t out[6]) {
-  int v[6];
-  if (sscanf(macStr.c_str(), "%x:%x:%x:%x:%x:%x",
-             &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6)
-    return false;
-
-  for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
-  return true;
+// --------------------- Hex Parsing ---------------------
+static uint8_t hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return 0;
 }
 
 // --------------------- WOL ---------------------
-static void sendWOL(const uint8_t mac[6]) {
-  uint8_t packet[102];
-  memset(packet, 0xFF, 6);
-  for (int i = 6; i < 102; i += 6) memcpy(packet + i, mac, 6);
+static void sendWOL(const char* macStr) {
+  uint8_t targetMac[6];
+  for (int i = 0; i < 6; i++) {
+    targetMac[i] = (hexNibble(macStr[i*3]) << 4) | hexNibble(macStr[i*3 + 1]);
+  }
 
-  udp.begin(0);
   udp.beginPacket(WiFi.broadcastIP(), 9);
-  udp.write(packet, sizeof(packet));
+
+  // Send 6 x 0xFF header
+  for (int i = 0; i < 6; i++) udp.write(0xFF);
+
+  // Send 16 repetitions of MAC directly
+  for (int i = 0; i < 16; i++) udp.write(targetMac, 6);
+
   udp.endPacket();
-}
-
-// --------------------- WiFi Manager ---------------------
-static void ensureWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.setAutoReconnect(true);
-
-  WiFiManager wm;
-  wm.setConfigPortalTimeout(180);
-
-  String html =
-    "<b>Device ID:</b><br>"
-    "<span style='font-size:36px;font-weight:800;'>"
-    + rawId +
-    "</span>";
-
-  WiFiManagerParameter info(html.c_str());
-  wm.addParameter(&info);
-
-  wm.autoConnect();
 }
 
 // --------------------- MQTT ---------------------
 static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  if (String(topic) != TOPIC_CMD) return;
-
-  String msg;
-  msg.reserve(length);
-  for (unsigned i = 0; i < length; i++) msg += (char)payload[i];
-
-  uint8_t mac[6];
-  if (parseMac(msg, mac)) sendWOL(mac);
+  char msg[32] = {0};
+  int len = length < sizeof(msg)-1 ? length : sizeof(msg)-1;
+  memcpy(msg, payload, len);
+  sendWOL(msg);
 }
 
 static void connectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (mqtt.connected()) return;
+  if (WiFi.status() != WL_CONNECTED || mqtt.connected()) return;
 
-  static uint32_t nextTry = 0;
-  uint32_t now = millis();
-  if ((int32_t)(now - nextTry) < 0) return;
-  nextTry = now + 3000;
-
+  tls.setInsecure();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
 
-  tls.setInsecure(); // (optional) replace with CA cert if you want strict TLS
+  char clientId[40];
+  snprintf(clientId, sizeof(clientId), "wol-%.*s", 16, esp32mac);
 
-  String clientId = "wol-" + deviceId.substring(0, 16);
-  if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS)) {
-    mqtt.subscribe(TOPIC_CMD.c_str());
+  if (mqtt.connect(clientId, MQTT_USER, MQTT_PASS)) {
+    mqtt.subscribe(topicCmd);
   }
 }
 
-// ================= Main runtime =================
+// ================= Main =================
 void setup() {
-  // Important: ESP.getEfuseMac() is 64-bit; this keeps your old behavior
-  rawId = String((uint32_t)ESP.getEfuseMac(), HEX);
-  rawId.toLowerCase();
+  Serial.begin(115200);
 
-#if USE_HASHED_ID
-  deviceId  = sha256Hex(rawId);
-#else
-  deviceId  = rawId;
-#endif
+  WiFi.macAddress(mac);
 
-  TOPIC_CMD = "wol/" + deviceId;
+  char macHex[13];
+  snprintf(macHex, sizeof(macHex), "%02x%02x%02x%02x%02x%02x",
+           mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
-  ensureWiFi();
-  connectMQTT();
+  if (USE_HASHED_ID) sha256Hex(macHex, esp32mac);
+  else strncpy(esp32mac, macHex, sizeof(esp32mac));
+
+  snprintf(topicCmd, sizeof(topicCmd), "wol/%s", esp32mac);
+
+  char macColon[18];
+  snprintf(macColon, sizeof(macColon), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+
+  char headerLabel[32];
+  snprintf(headerLabel, sizeof(headerLabel), "MAC: %s", macColon);
+
+  improvSerial.setDeviceInfo(
+    (ImprovTypes::ChipFamily)0,
+    headerLabel,
+    "",
+    ""
+  );
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();  // Improv handles AP/portal
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    uint32_t now = millis();
-    if (wifiLostAt == 0) wifiLostAt = now;
+  improvSerial.handleSerial();
 
-    if ((uint32_t)(now - lastWifiKick) > 20000) {
-      lastWifiKick = now;
-      WiFi.reconnect();
-    }
-
-    if ((uint32_t)(now - wifiLostAt) > 180000) ESP.restart();
-
-    delay(50);
-    return;
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!mqtt.connected()) connectMQTT();
+    mqtt.loop();
   }
-
-  wifiLostAt = 0;
-  lastWifiKick = 0;
-
-  if (!mqtt.connected()) connectMQTT();
-  mqtt.loop();
 }
