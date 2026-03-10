@@ -5,15 +5,8 @@
 #include <WiFiUdp.h>
 #include <ImprovWiFiLibrary.h>
 #include "mbedtls/md.h"
-// ================= ESP32 MAC mode =================
-//
-// USE_HASHED_ID = 1 -> topic uses SHA-256(esp32mac)
-// USE_HASHED_ID = 0 -> topic uses esp32mac
-//
-// MQTT:
-//   Topic:   wol/<esp32-mac>
-//   Payload: "AA:BB:CC:DD:EE:FF"
-//
+#include <WebServer.h>  // minimal web page after Wi-Fi
+
 #define USE_HASHED_ID 1
 
 // ----------------------- MQTT -----------------------
@@ -27,10 +20,12 @@ WiFiClientSecure tls;
 PubSubClient mqtt(tls);
 WiFiUDP udp;
 ImprovWiFi improvSerial(&Serial);
+WebServer server(80);
 
 static uint8_t mac[6];
 static char esp32mac[65];
 static char topicCmd[80];
+static char macColon[18];
 
 // --------------------- SHA-256 ---------------------
 static void sha256Hex(const char* input, char* output) {
@@ -60,13 +55,8 @@ static void sendWOL(const char* macStr) {
   }
 
   udp.beginPacket(WiFi.broadcastIP(), 9);
-
-  // Send 6 x 0xFF header
   for (int i = 0; i < 6; i++) udp.write(0xFF);
-
-  // Send 16 repetitions of MAC directly
   for (int i = 0; i < 16; i++) udp.write(targetMac, 6);
-
   udp.endPacket();
 }
 
@@ -93,10 +83,37 @@ static void connectMQTT() {
   }
 }
 
+// --------------------- Display ESP32 MAC address on Web page ---------------------
+void handleRoot() {
+  char page[1024];
+  snprintf(page,sizeof(page),
+    "<!DOCTYPE html><html lang=\"en\"><head>"
+    "<meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">"
+    "<title>ESP32 Device</title>"
+    "<style>"
+    "body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;"
+    "background:#0d1117;color:#c9d1d9;font-family:system-ui,sans-serif}"
+    "h2{margin:.5rem 0;font-size:1.2rem;color:#8b949e}"
+    "p.mac{font-family:monospace;font-size:2rem;background:#196f3d;color:#fff;padding:.5rem 1rem;"
+    "border-radius:12px;border:1px solid #145a2e;margin:.25rem 0}"
+    "p.note,a{font-size:.9rem;color:#8b949e;margin-top:.5rem}"
+    "a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}"
+    "</style></head><body>"
+    "<h2>ESP32 MAC Address</h2>"
+    "<p class=\"mac\">%s</p>"
+    "<p class=\"note\">Copy this MAC for WOL site</p>"
+    "<a href=\"https://wol.kreaxv.top/\" target=\"_blank\">wol.kreaxv.top</a>"
+    "</body></html>",
+    macColon
+  );
+  server.send(200,"text/html",page);
+}
+
 // ================= Main =================
 void setup() {
   Serial.begin(115200);
 
+  // Read MAC
   WiFi.macAddress(mac);
 
   char macHex[13];
@@ -108,26 +125,29 @@ void setup() {
 
   snprintf(topicCmd, sizeof(topicCmd), "wol/%s", esp32mac);
 
-  char macColon[18];
   snprintf(macColon, sizeof(macColon), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
-  char headerLabel[32];
-  snprintf(headerLabel, sizeof(headerLabel), "MAC: %s", macColon);
-
+  // Improv device info
   improvSerial.setDeviceInfo(
     (ImprovTypes::ChipFamily)0,
-    headerLabel,
+    macColon,  // show MAC in portal
     "",
     ""
   );
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();  // Improv handles AP/portal
+  // Let Improv handle AP / portal automatically
+  WiFi.begin();  
+
+  // Web server for after Wi-Fi connected
+  server.on("/", handleRoot);
+  server.begin();
 }
 
 void loop() {
   improvSerial.handleSerial();
+
+  server.handleClient(); // handle minimal web page
 
   if (WiFi.status() == WL_CONNECTED) {
     if (!mqtt.connected()) connectMQTT();
