@@ -26,7 +26,7 @@ You can:
 
 - Flash firmware directly from browser (ESP Web Tools)
 - Configure Wi-Fi
-- Wake your PC using Device ID + MAC
+- Wake your PC using ESP32_MAC + PC_MAC
 
 No configuration required.  
 This is the default and recommended usage.
@@ -53,7 +53,7 @@ MQTT_PASS
 
 **Topic**
 ```text
-wol/<device-id>
+wol/<ESP32_MAC>
 ```
 
 **Payload**
@@ -63,7 +63,7 @@ AA:BB:CC:DD:EE:FF
 
 **Example**
 ```text
-Topic:   wol/1a2b3c4d
+Topic:   wol/1A:2B:3C:4C:5D:6F
 Payload: 3C:52:82:11:9A:EF
 ```
 
